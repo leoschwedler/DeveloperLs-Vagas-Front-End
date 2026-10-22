@@ -1,16 +1,16 @@
 # DeveloperLS Vagas
 
-Painel pessoal que mostra as vagas de **estágio, trainee e júnior** em **Curitiba ou remotas**, coletadas automaticamente do LinkedIn pelo [Apify](https://apify.com). Cada vaga tem um botão para abrir o anúncio e outro para marcar que você já se candidatou.
+Painel pessoal que mostra as vagas de **estágio, trainee e júnior** em **Curitiba ou remotas**, coletadas automaticamente do LinkedIn, Indeed e Gupy pelo [Apify](https://apify.com). Cada vaga tem um botão para abrir o anúncio e outro para marcar que você já se candidatou.
 
 ## Como funciona
 
 ```
-Apify (agendamento 8h, seg-sex)  →  /api/jobs (função com o token)  →  página React
+Apify (agendamento diário, 17h)  →  /api/jobs (função com o token)  →  página React
 ```
 
-1. Uma **Task** do Apify roda o ator `Advanced LinkedIn Job Search API` todo dia útil às 8h (horário de Brasília).
+1. Cinco **Tasks** do Apify (LinkedIn, Indeed e Gupy) rodam todo dia às 17h (horário de Brasília).
 2. A função `api/jobs.js` lê o resultado da última execução bem-sucedida. O token do Apify fica só no servidor e nunca vai para o navegador.
-3. A página mostra só as vagas de **hoje ou ontem**, em **Curitiba ou remotas**, sem títulos de pleno ou sênior.
+3. A página mostra só as vagas de tecnologia de **hoje ou ontem**, em **Curitiba ou remotas**, sem nada acima de júnior.
 4. Ao clicar em **Me candidatei**, a vaga é salva no navegador e passa para a seção **Vagas candidatadas**. Ela continua lá mesmo depois de sair do feed de 24 horas.
 
 Se o Apify estiver indisponível, a página usa o arquivo `public/jobs.json` como reserva.
@@ -73,18 +73,30 @@ src/styles.css     estilos
 vite.config.js     configuração do Vite e do /api/jobs em desenvolvimento
 ```
 
-## Configuração da busca no Apify
+## Fontes de vagas (Tasks do Apify)
 
-A busca é definida na Task do Apify, não neste código:
+A busca é definida nas Tasks do Apify, não neste código. Todas rodam no mesmo agendamento (todos os dias, 17h) e a função `/api/jobs` junta os resultados de cada uma (lista `SOURCES` em `server/jobs.js`).
 
-- **Ator:** `insights_data/advanced-linkedin-job-search-api` (ID `3GVvOeIagBWpkzSaQ`)
-- **Período:** últimas 24 horas
-- **Locais:** Curitiba, Paraná e Brasil (para vagas remotas)
-- **Níveis:** entry level, associate e internship
-- **Limite:** 12 vagas por execução e 2 por busca, para manter o custo baixo (cerca de US$ 0,04 por execução)
-- **Detalhes extras desligados:** detalhes completos da vaga e dados da empresa
+| Task | Ator | O que busca |
+| --- | --- | --- |
+| `developerls-vagas` | `insights_data/advanced-linkedin-job-search-api` | LinkedIn: Curitiba e Brasil, 24 horas, entry level e estágio, até 24 vagas por execução |
+| `indeed-curitiba` | `kaix/indeed-scraper` | Indeed: desenvolvedor/programador júnior, estágio e trainee em Curitiba (35 km), 24 horas |
+| `indeed-remoto` | `kaix/indeed-scraper` | Indeed: as mesmas buscas com "remoto", em todo o Brasil |
+| `gupy-curitiba-v2` | `zen-studio/gupy-jobs-scraper` | Gupy: "desenvolvedor júnior" em Curitiba, até 15 vagas |
+| `gupy-remoto` | `zen-studio/gupy-jobs-scraper` | Gupy: "desenvolvedor júnior" remoto, até 15 vagas |
 
-Para mudar as palavras-chave ou os filtros, edite o input da Task no Apify.
+Custo aproximado: LinkedIn US$ 3,50 por mil vagas, Indeed menos de US$ 0,10 por mil e Gupy cerca de US$ 3 por mil. Uma execução completa fica na casa de US$ 0,10 a US$ 0,20.
+
+Para mudar palavras-chave, locais ou limites, edite o input da Task no Apify. Para incluir uma fonte nova, crie a Task, adicione-a ao agendamento e inclua uma entrada em `SOURCES` com a função que converte os campos dela.
+
+## Filtros da página
+
+A página (`src/App.jsx`) aplica estes filtros, nesta ordem:
+
+1. Postada hoje ou ontem.
+2. Em Curitiba ou remota.
+3. Título de tecnologia (desenvolvedor, programador, software, sistemas etc.).
+4. **Nada acima de júnior:** títulos com pleno, sênior, especialista, líder, staff, níveis II, III e IV são escondidos.
 
 ## Limitações
 

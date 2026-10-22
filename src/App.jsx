@@ -5,7 +5,12 @@ const APIFY_URL = 'https://console.apify.com/actors/3GVvOeIagBWpkzSaQ/input'
 // A data da vaga vem sem horário, então "até 24 horas" = postada hoje ou ontem.
 const RECENT_DAYS = 1
 
-const SENIOR_RE = /(pleno|\bpl\b|s[eê]nior|\bsr\b|especialista|\bspec\b|lead|coordenador)/i
+// Nada acima de júnior: pleno, sênior, especialista, líder, níveis II/III/IV etc.
+const SENIOR_RE =
+  /(pleno|\bpl\b|s[eê]nior|\bsr\b|especialista|\bspec\b|lead|coordenador|gerente|mid[- ]?level|staff|principal|\b(ii|iii|iv|v)\b)/i
+// Só vagas de tecnologia (as fontes gerais, como o Indeed, trazem estágios de outras áreas).
+const TECH_RE =
+  /(desenvolv|programador|developer|\bdev\b|software|sistemas|full\s?-?stack|front|back\s?-?end|java|react|kotlin|android|mobile|\bti\b|tecnologia|\btech\b|dados|\bdata\b|engenheir|engineer|devops|\bqa\b|testes|programa[cç][aã]o)/i
 
 // Aceita tanto o formato salvo em jobs.json quanto o dataset bruto exportado do Apify.
 function normalize(raw) {
@@ -150,6 +155,7 @@ export default function App() {
       jobs
         .filter((j) => calendarDays(j.posted) <= RECENT_DAYS)
         .filter((j) => isRemote(j) || /curitiba/i.test(j.location))
+        .filter((j) => TECH_RE.test(j.title))
         .filter((j) => !SENIOR_RE.test(j.title))
         .filter((j) => !applied[j.id])
         .sort((a, b) => String(b.posted).localeCompare(String(a.posted))),
