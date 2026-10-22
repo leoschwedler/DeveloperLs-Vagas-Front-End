@@ -5,10 +5,10 @@ Painel pessoal que mostra as vagas de **estágio, trainee e júnior** em **Curit
 ## Como funciona
 
 ```
-Apify (agendamento diário, 17h)  →  /api/jobs (função com o token)  →  página React
+Apify (agendamento 17h, seg-sex)  →  /api/jobs (função com o token)  →  página React
 ```
 
-1. Cinco **Tasks** do Apify (LinkedIn, Indeed e Gupy) rodam todo dia às 17h (horário de Brasília).
+1. Cinco **Tasks** do Apify (LinkedIn, Indeed e Gupy) rodam de segunda a sexta às 17h (horário de Brasília).
 2. A função `api/jobs.js` lê o resultado da última execução bem-sucedida. O token do Apify fica só no servidor e nunca vai para o navegador.
 3. A página mostra só as vagas de tecnologia de **hoje ou ontem**, em **Curitiba ou remotas**, sem nada acima de júnior.
 4. Ao clicar em **Me candidatei**, a vaga é salva no navegador e passa para a seção **Vagas candidatadas**. Ela continua lá mesmo depois de sair do feed de 24 horas.
@@ -75,7 +75,7 @@ vite.config.js     configuração do Vite e do /api/jobs em desenvolvimento
 
 ## Fontes de vagas (Tasks do Apify)
 
-A busca é definida nas Tasks do Apify, não neste código. Todas rodam no mesmo agendamento (todos os dias, 17h) e a função `/api/jobs` junta os resultados de cada uma (lista `SOURCES` em `server/jobs.js`).
+A busca é definida nas Tasks do Apify, não neste código. Todas rodam no mesmo agendamento (segunda a sexta, 17h) e a função `/api/jobs` junta os resultados de cada uma (lista `SOURCES` em `server/jobs.js`).
 
 | Task | Ator | O que busca |
 | --- | --- | --- |
