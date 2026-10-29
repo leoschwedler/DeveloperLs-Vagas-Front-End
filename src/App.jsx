@@ -1,27 +1,19 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
+import { apply, getApplications, getFeed, unapply } from './api'
+import { migrateLegacyApplications } from './legacyMigration'
 
-const STORAGE_KEY = 'vagas-candidaturas-v2'
 const APIFY_URL = 'https://console.apify.com/actors/3GVvOeIagBWpkzSaQ/input'
-// A data da vaga vem sem horário, então "até 24 horas" = postada hoje ou ontem.
-const RECENT_DAYS = 1
 
-// Nada acima de júnior: pleno, sênior, especialista, líder, níveis II/III/IV etc.
-const SENIOR_RE =
-  /(pleno|\bpl\b|s[eê]nior|\bsr\b|especialista|\bspec\b|lead|coordenador|gerente|mid[- ]?level|staff|principal|\b(ii|iii|iv|v)\b)/i
-// Só vagas de tecnologia (as fontes gerais, como o Indeed, trazem estágios de outras áreas).
-const TECH_RE =
-  /(desenvolv|programador|developer|\bdev\b|software|sistemas|full\s?-?stack|front|back\s?-?end|java|react|kotlin|android|mobile|\bti\b|tecnologia|\btech\b|dados|\bdata\b|engenheir|engineer|devops|\bqa\b|testes|programa[cç][aã]o)/i
-
-// Aceita tanto o formato salvo em jobs.json quanto o dataset bruto exportado do Apify.
-function normalize(raw) {
+// Formato da API (JobResponse) -> formato usado pelos cards.
+function fromApi(job) {
   return {
-    id: String(raw.id ?? raw.linkedin_job_id ?? raw.url),
-    title: raw.title ?? '',
-    company: raw.company ?? raw.company_name ?? '',
-    location: raw.location ?? raw.location_text ?? '',
-    posted: raw.posted ?? raw.posted_at ?? '',
-    workplace: raw.workplace ?? raw.workplace_type ?? null,
-    url: raw.url ?? raw.job_url ?? '',
+    id: job.id,
+    title: job.title ?? '',
+    company: job.company ?? '',
+    location: job.location ?? '',
+    posted: job.postedAt ?? '',
+    workplace: job.workplace ?? null,
+    url: job.url ?? '',
   }
 }
 
@@ -60,14 +52,6 @@ function ago(iso) {
   if (days <= 0) return 'Hoje'
   if (days === 1) return 'Ontem'
   return `Há ${days} dias`
-}
-
-function loadApplied() {
-  try {
-    return JSON.parse(localStorage.getItem(STORAGE_KEY)) ?? {}
-  } catch {
-    return {}
-  }
 }
 
 function initials(name) {
@@ -110,62 +94,47 @@ function JobCard({ job, applied, onToggle }) {
 }
 
 export default function App() {
-  const [jobs, setJobs] = useState([])
+  const [feed, setFeed] = useState([])
+  // Candidaturas vêm do backend e continuam aqui mesmo depois que a vaga sai do feed de 24h.
+  const [saved, setSaved] = useState([])
   const [error, setError] = useState('')
-  // Candidaturas guardam a vaga inteira, para continuarem aqui mesmo depois que saírem do feed de 24h.
-  const [applied, setApplied] = useState(loadApplied)
+  const [busy, setBusy] = useState(false)
 
-  useEffect(() => {
-    const get = (url) =>
-      fetch(url).then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
-
-    // Tenta o Apify ao vivo (função /api/jobs); se falhar, usa o jobs.json salvo.
-    get('/api/jobs')
-      .then((data) => {
-        if (!Array.isArray(data)) throw new Error('resposta inesperada')
-        setJobs(data.map(normalize))
-      })
-      .catch(() =>
-        get(`${import.meta.env.BASE_URL}jobs.json`)
-          .then((data) => setJobs(data.map(normalize)))
-          .catch((e) => setError(`Não consegui carregar as vagas (${e.message}).`))
-      )
-  }, [])
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(applied))
-    } catch {
-      /* armazenamento indisponível: segue sem persistir */
-    }
-  }, [applied])
-
-  function toggle(job) {
-    setApplied((prev) => {
-      const next = { ...prev }
-      if (next[job.id]) delete next[job.id]
-      else next[job.id] = { ...job, appliedAt: new Date().toISOString() }
-      return next
-    })
-  }
-
-  // Vagas do feed: recentes, em Curitiba ou remotas, sem pleno/sênior e ainda não candidatadas.
-  const feed = useMemo(
+  const load = useCallback(
     () =>
-      jobs
-        .filter((j) => calendarDays(j.posted) <= RECENT_DAYS)
-        .filter((j) => isRemote(j) || /curitiba/i.test(j.location))
-        .filter((j) => TECH_RE.test(j.title))
-        .filter((j) => !SENIOR_RE.test(j.title))
-        .filter((j) => !applied[j.id])
-        .sort((a, b) => String(b.posted).localeCompare(String(a.posted))),
-    [jobs, applied]
+      Promise.all([getFeed(), getApplications()])
+        .then(([jobs, applications]) => {
+          setFeed(jobs.map(fromApi))
+          setSaved(
+            applications
+              .slice()
+              .sort((x, y) => y.id - x.id)
+              .map((a) => ({ ...fromApi(a.job), applicationId: a.id }))
+          )
+          setError('')
+        })
+        .catch((e) => setError(`Não consegui carregar as vagas (${e.message}).`)),
+    []
   )
 
-  const saved = useMemo(
-    () => Object.values(applied).sort((a, b) => b.appliedAt.localeCompare(a.appliedAt)),
-    [applied]
-  )
+  useEffect(() => {
+    // Primeiro envia as candidaturas antigas do navegador (se houver), depois carrega as listas.
+    migrateLegacyApplications().catch(() => {}).then(load)
+  }, [load])
+
+  async function toggle(job) {
+    if (busy) return
+    setBusy(true)
+    try {
+      if (job.applicationId) await unapply(job.applicationId)
+      else await apply(job.id)
+      await load()
+    } catch (e) {
+      setError(`Não consegui salvar (${e.message}).`)
+    } finally {
+      setBusy(false)
+    }
+  }
 
   const today = new Date().toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' })
 
@@ -217,7 +186,7 @@ export default function App() {
             <h3 className="section-title">Vagas candidatadas</h3>
             <ul className="list">
               {saved.map((j) => (
-                <JobCard key={j.id} job={j} applied onToggle={() => toggle(j)} />
+                <JobCard key={j.applicationId} job={j} applied onToggle={() => toggle(j)} />
               ))}
             </ul>
           </>
