@@ -1,8 +1,28 @@
-import { useCallback, useEffect, useState } from 'react'
-import { apply, getApplications, getFeed, unapply } from './api'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { apply, ensureJob, getApplications, getFeed, unapply } from './api'
 import { migrateLegacyApplications } from './legacyMigration'
 
 const APIFY_URL = 'https://console.apify.com/actors/3GVvOeIagBWpkzSaQ/input'
+// A data da vaga vem sem horário, então "até 24 horas" = postada hoje ou ontem.
+const RECENT_DAYS = 1
+
+// Nada acima de júnior: pleno, sênior, especialista, líder, níveis II/III/IV etc.
+const SENIOR_RE =
+  /(pleno|\bpl\b|s[eê]nior|\bsr\b|especialista|\bspec\b|lead|coordenador|gerente|mid[- ]?level|staff|principal|\b(ii|iii|iv|v)\b)/i
+// Só vagas de tecnologia (as fontes gerais, como o Indeed, trazem estágios de outras áreas).
+const TECH_RE =
+  /(desenvolv|programador|developer|\bdev\b|software|sistemas|full\s?-?stack|front|back\s?-?end|java|react|kotlin|android|mobile|\bti\b|tecnologia|\btech\b|dados|\bdata\b|engenheir|engineer|devops|\bqa\b|testes|programa[cç][aã]o)/i
+
+// Item do /api/jobs (Apify) -> formato usado pelos cards.
+const fromApify = (raw) => ({
+  id: String(raw.id),
+  title: raw.title ?? '',
+  company: raw.company ?? '',
+  location: raw.location ?? '',
+  posted: raw.posted ?? '',
+  workplace: raw.workplace ?? null,
+  url: raw.url ?? '',
+})
 
 // Formato da API (JobResponse) -> formato usado pelos cards.
 function fromApi(job) {
@@ -94,26 +114,29 @@ function JobCard({ job, applied, onToggle }) {
 }
 
 export default function App() {
-  const [feed, setFeed] = useState([])
+  const [jobs, setJobs] = useState([])
   // Candidaturas vêm do backend e continuam aqui mesmo depois que a vaga sai do feed de 24h.
   const [saved, setSaved] = useState([])
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
 
+  // Vagas: direto do Apify. Candidaturas: backend. Uma falha não derruba a outra.
   const load = useCallback(
     () =>
-      Promise.all([getFeed(), getApplications()])
-        .then(([jobs, applications]) => {
-          setFeed(jobs.map(fromApi))
+      Promise.allSettled([getFeed(), getApplications()]).then(([feedRes, appsRes]) => {
+        const errors = []
+        if (feedRes.status === 'fulfilled' && Array.isArray(feedRes.value)) setJobs(feedRes.value.map(fromApify))
+        else errors.push(`Não consegui carregar as vagas (${feedRes.reason?.message ?? 'resposta inesperada'}).`)
+        if (appsRes.status === 'fulfilled') {
           setSaved(
-            applications
+            appsRes.value
               .slice()
               .sort((x, y) => y.id - x.id)
               .map((a) => ({ ...fromApi(a.job), applicationId: a.id }))
           )
-          setError('')
-        })
-        .catch((e) => setError(`Não consegui carregar as vagas (${e.message}).`)),
+        } else errors.push(`Não consegui carregar as candidaturas (${appsRes.reason?.message}).`)
+        setError(errors.join(' '))
+      }),
     []
   )
 
@@ -127,7 +150,7 @@ export default function App() {
     setBusy(true)
     try {
       if (job.applicationId) await unapply(job.applicationId)
-      else await apply(job.id)
+      else await apply(await ensureJob(job))
       await load()
     } catch (e) {
       setError(`Não consegui salvar (${e.message}).`)
@@ -135,6 +158,18 @@ export default function App() {
       setBusy(false)
     }
   }
+
+  // Vagas do feed: recentes, em Curitiba ou remotas, sem pleno/sênior e ainda não candidatadas.
+  const feed = useMemo(() => {
+    const appliedUrls = new Set(saved.map((j) => j.url))
+    return jobs
+      .filter((j) => calendarDays(j.posted) <= RECENT_DAYS)
+      .filter((j) => isRemote(j) || /curitiba/i.test(j.location))
+      .filter((j) => TECH_RE.test(j.title))
+      .filter((j) => !SENIOR_RE.test(j.title))
+      .filter((j) => !appliedUrls.has(j.url))
+      .sort((a, b) => String(b.posted).localeCompare(String(a.posted)))
+  }, [jobs, saved])
 
   const today = new Date().toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' })
 
